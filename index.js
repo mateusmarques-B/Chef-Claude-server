@@ -23,9 +23,6 @@ app.post("/api/recipe", async (req, res) => {
       "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.3",
       {
         inputs: `Make a recipe with: ${ingredients.join(", ")}`,
-        parameters: {
-          max_new_tokens: 612,
-        },
       },
       {
         headers: {
