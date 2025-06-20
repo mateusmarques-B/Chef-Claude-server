@@ -20,7 +20,7 @@ app.post("/api/recipe", async (req, res) => {
 
   try {
     const response = await axios.post(
-      "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.3",
+      "https://api-inference.huggingface.co/models/HuggingFaceH4/zephyr-7b-beta",
       {
         inputs: `Make a recipe with: ${ingredients.join(", ")}`,
       },
