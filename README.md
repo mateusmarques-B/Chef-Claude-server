@@ -1,6 +1,6 @@
 # 👨‍🍳 Chef Claude
 
-Chef Claude é um aplicativo web que gera receitas com base nos ingredientes que você tem em casa. A mágica acontece graças a um modelo de linguagem hospedado na Hugging Face!
+Chef Claude é um aplicativo web que gera receitas com base nos ingredientes que você tem em casa. Tudo acontece graças a um modelo de linguagem hospedado na Hugging Face!
 
 ## 🚀 Tecnologias
 
