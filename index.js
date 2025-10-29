@@ -27,6 +27,10 @@ app.use(
 );
 app.use(express.json());
 
+app.get("/", (req, res) => {
+res.send("Chef Claude API online 🍳");
+});
+
 async function generateRecipe(ingredients, model) {
   console.log(`🧠 Using model: ${model}`);
   const response = await axios.post(
@@ -89,3 +93,4 @@ app.post("/api/recipe", async (req, res) => {
 app.listen(PORT, () => {
   console.log(`✅ Chef Claude API online 🍳 | Running on port: ${PORT}`);
 });
+
