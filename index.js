@@ -2,95 +2,149 @@ import dotenv from "dotenv";
 dotenv.config();
 
 import express from "express";
-import axios from "axios";
 import cors from "cors";
+import axios from "axios"; // faz a chamada da API do Gemini
 
-const app = express();
-const PORT = process.env.PORT || 3001;
+// --- CONFIGURAÇÃO CHAVE DE ACESSO (GEMINI) ---
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
+if (!GEMINI_API_KEY) {
+  console.error(
+    "ERRO: A variável de ambiente GEMINI_API_KEY não está definida no seu arquivo .env."
+  );
+  process.exit(1);
+}
+
+const MODEL_ID = "gemini-2.5-flash-preview-09-2025";
+const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_ID}:generateContent?key=${GEMINI_API_KEY}`;
+
+// Log de início para feedback
+console.log(
+  `✅ Token GEMINI carregando. Início: ${GEMINI_API_KEY.substring(0, 7)}...`
+);
+console.log(`✅ API de Geração configurada para o modelo Gemini.`);
+
+// --- CONFIGURAÇÃO EXPRESS E CORS ---
 const allowedOrigins = [
   "https://chef-claude-pi-nine.vercel.app",
   "http://localhost:5173",
 ];
 
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error("Not allowed by CORS"));
-      }
-    },
-    credentials: true,
-  })
-);
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error("Not allowed by CORS"));
+    }
+  },
+};
+
+const app = express();
+app.use(cors(corsOptions));
 app.use(express.json());
 
 app.get("/", (req, res) => {
-res.send("Chef Claude API online 🍳");
+  res.send("Chef Claude API online 🍳");
 });
 
-async function generateRecipe(ingredients, model) {
-  console.log(`🧠 Using model: ${model}`);
-  const response = await axios.post(
-    `https://api-inference.huggingface.co/models/${model}`,
-    {
-      inputs: `Create a detailed cooking recipe using the following ingredients: ${ingredients.join(
-        ", "
-      )}. Include title, ingredients list, and step-by-step instructions.`,
-      parameters: { max_new_tokens: 512 },
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${process.env.HF_ACCESS_TOKEN}`,
+const PORT = process.env.PORT || 3001;
+
+// 1. Definição do Esquema JSON para Resposta Estruturada
+const RECIPE_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    name: { type: "STRING" },
+    description: { type: "STRING" },
+    ingredients: {
+      type: "ARRAY",
+      items: {
+        type: "OBJECT",
+        properties: {
+          item: { type: "STRING" },
+          quantity: { type: "STRING" },
+          unit: { type: "STRING" },
+        },
+        propertyOrdering: ["item", "quantity", "unit"],
       },
-      timeout: 120000,
-    }
-  );
+    },
+    instructions: {
+      type: "ARRAY",
+      items: { type: "STRING" },
+    },
+  },
+  propertyOrdering: ["name", "description", "ingredients", "instructions"],
+};
 
-  return response.data;
-}
-
+// --- ROTA DE GERAÇÃO DE RECEITA COM JSON (USANDO GEMINI E AXIOS) ---
 app.post("/api/recipe", async (req, res) => {
   const { ingredients } = req.body;
-  console.log("🧾 Request received with ingredients:", ingredients);
 
-  if (!ingredients || !Array.isArray(ingredients)) {
-    return res.status(400).json({ error: "Invalid ingredients format" });
+  if (!ingredients || !Array.isArray(ingredients) || ingredients.length === 0) {
+    return res.status(400).json({
+      error:
+        "Invalid request: Please provide a non-empty array of ingredients.",
+    });
   }
 
-  try {
-    const primaryModel = "HuggingFaceH4/zephyr-7b-beta";
-    let data;
+  console.log("🧾 Request received with ingredients:", ingredients);
 
-    try {
-      data = await generateRecipe(ingredients, primaryModel);
-    } catch (error) {
-      console.warn("⚠️ Primary model failed, trying fallback...");
-      const fallbackModel = "mistralai/Mistral-7B-Instruct-v0.3";
-      data = await generateRecipe(ingredients, fallbackModel);
+  const ingredientList = ingredients.join(", ");
+
+  // 2. Configuração do System Instruction e User Query
+  const systemInstruction = `You are Chef Claude, a world-class chef who only speaks Portuguese. Generate one complete recipe in Portuguese using ONLY the provided ingredients. Your response MUST strictly adhere to the provided JSON schema. Do not include any introductory text, markdown formatting, or text outside the JSON object.`;
+  const userQuery = `Generate a recipe using ONLY these ingredients: ${ingredientList}.`;
+
+  // 3. Payload para a API do Gemini (JSON Estruturado)
+  const payload = {
+    contents: [{ parts: [{ text: userQuery }] }],
+    systemInstruction: { parts: [{ text: systemInstruction }] },
+    generationConfig: {
+      responseMimeType: "application/json",
+      responseSchema: RECIPE_SCHEMA,
+      temperature: 0.7,
+      maxOutputTokens: 2048,
+    },
+  };
+
+  try {
+    // 4. Chamada à API do Gemini
+    const geminiResponse = await axios.post(API_URL, payload, {
+      timeout: 120000,
+    });
+
+    // Extração e Parse do JSON (Gemini retorna JSON como uma string no campo 'text')
+    const candidate = geminiResponse.data.candidates?.[0];
+    const jsonText = candidate?.content?.parts?.[0]?.text;
+
+    if (!jsonText) {
+      throw new Error(
+        "Gemini API returned an empty or invalid candidate response."
+      );
     }
 
-    console.log("✅ Response from Hugging Face:", data);
+    const recipeObject = JSON.parse(jsonText);
 
-    const recipe =
-      data[0]?.generated_text ||
-      data.generated_text ||
-      "No recipe generated.";
-
-    res.json({ recipe });
+    // Resposta de Sucesso
+    res.json({ recipe: recipeObject });
   } catch (error) {
-    console.error(
-      "❌ Error generating recipe:",
-      error.response?.status,
-      error.response?.data || error.message
-    );
-    res.status(500).json({ error: "Error when searching for recipe" });
+    // Tratamento de Erro do Axios/Gemini
+    const status = error.response?.status || error.status || 500;
+    const errorDetails = error.response?.data?.error || {
+      message: "Unknown error occurred.",
+    };
+
+    console.error("❌ Erro na API Gemini:", errorDetails.message);
+
+    // Retorna a mensagem de erro para o cliente
+    res.status(500).json({
+      error: "Internal Server Error during recipe generation (Gemini API).",
+      details: errorDetails,
+      status_code: status,
+    });
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`✅ Chef Claude API online 🍳 | Running on port: ${PORT}`);
+  console.log(`🚀 Chef Claude API online 🍳 (port ${PORT})`);
 });
-
